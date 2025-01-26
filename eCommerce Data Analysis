@@ -1,0 +1,126 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import StandardScaler
+
+# Load the datasets
+customers = pd.read_csv("Customers.csv")
+products = pd.read_csv("Products.csv")
+transactions = pd.read_csv("Transactions.csv")
+
+# ---------------- Task 1: Exploratory Data Analysis (EDA) ---------------- #
+
+def perform_eda():
+    # Basic info and null checks
+    print("Customers Data:\n", customers.info())
+    print("Products Data:\n", products.info())
+    print("Transactions Data:\n", transactions.info())
+
+    # Summary statistics
+    print("\nCustomers Summary:\n", customers.describe(include='all'))
+    print("\nProducts Summary:\n", products.describe(include='all'))
+    print("\nTransactions Summary:\n", transactions.describe())
+
+    # Visualizations
+    plt.figure(figsize=(10, 6))
+    sns.countplot(x='Region', data=customers)
+    plt.title("Customer Distribution by Region")
+    plt.show()
+
+    plt.figure(figsize=(10, 6))
+    sns.boxplot(x='Category', y='Price', data=products)
+    plt.title("Product Prices by Category")
+    plt.show()
+
+    plt.figure(figsize=(10, 6))
+    transactions['TransactionDate'] = pd.to_datetime(transactions['TransactionDate'])
+    transactions.groupby(transactions['TransactionDate'].dt.to_period('M')).size().plot(kind='bar')
+    plt.title("Monthly Transaction Counts")
+    plt.show()
+
+    # Example insights
+    insights = [
+        "Most customers are concentrated in specific regions.",
+        "The category-wise distribution of product prices varies significantly.",
+        "Transaction volume has seasonal trends, with peaks in certain months.",
+        "A few products dominate sales, contributing to high revenue.",
+        "Newer customers are more likely to transact in specific regions."
+    ]
+    return insights
+
+# ---------------- Task 2: Lookalike Model ---------------- #
+
+def build_lookalike_model():
+    # Combine data
+    data = pd.merge(transactions, customers, on='CustomerID')
+    data = pd.merge(data, products, on='ProductID')
+
+    # Create user-product matrix
+    user_product_matrix = data.pivot_table(index='CustomerID', columns='ProductID', values='Quantity', aggfunc='sum', fill_value=0)
+
+    # Compute similarity
+    similarity_matrix = cosine_similarity(user_product_matrix)
+    similarity_df = pd.DataFrame(similarity_matrix, index=user_product_matrix.index, columns=user_product_matrix.index)
+
+    # Get lookalikes for the first 20 customers
+    lookalikes = {}
+    for customer_id in user_product_matrix.index[:20]:
+        similar_customers = similarity_df[customer_id].sort_values(ascending=False)[1:4]
+        lookalikes[customer_id] = [(other_id, score) for other_id, score in similar_customers.items()]
+
+    # Save to CSV
+    lookalikes_df = pd.DataFrame.from_dict(lookalikes, orient='index')
+    lookalikes_df.to_csv("Lookalike.csv")
+
+    return lookalikes
+
+# ---------------- Task 3: Customer Segmentation ---------------- #
+
+def perform_clustering():
+    # Prepare data for clustering
+    clustering_data = pd.merge(transactions, customers, on='CustomerID')
+    clustering_data = clustering_data.groupby('CustomerID').agg({
+        'TotalValue': 'sum',
+        'Quantity': 'sum',
+        'Price': 'mean'
+    }).reset_index()
+
+    scaler = StandardScaler()
+    scaled_data = scaler.fit_transform(clustering_data.iloc[:, 1:])
+
+    # Apply KMeans clustering
+    kmeans = KMeans(n_clusters=4, random_state=42)
+    clusters = kmeans.fit_predict(scaled_data)
+    clustering_data['Cluster'] = clusters
+
+    # Calculate DB Index
+    from sklearn.metrics import davies_bouldin_score
+    db_index = davies_bouldin_score(scaled_data, clusters)
+
+    # Visualize clusters
+    plt.figure(figsize=(10, 6))
+    sns.scatterplot(x=clustering_data['TotalValue'], y=clustering_data['Quantity'], hue=clustering_data['Cluster'], palette='viridis')
+    plt.title("Customer Clusters")
+    plt.show()
+
+    return clustering_data, db_index
+
+# ---------------- Run the Tasks ---------------- #
+
+if __name__ == "__main__":
+    print("Performing EDA...")
+    insights = perform_eda()
+    print("\nBusiness Insights:")
+    for insight in insights:
+        print(f"- {insight}")
+
+    print("\nBuilding Lookalike Model...")
+    lookalikes = build_lookalike_model()
+    print("Top 3 Lookalikes for first 20 customers saved to Lookalike.csv")
+
+    print("\nPerforming Customer Clustering...")
+    clustering_data, db_index = perform_clustering()
+    print(f"DB Index: {db_index}")
